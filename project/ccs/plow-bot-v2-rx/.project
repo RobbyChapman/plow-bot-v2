@@ -26,6 +26,11 @@
 	</natures>
 	<linkedResources>
 		<link>
+			<name>main.c</name>
+			<type>1</type>
+			<locationURI>PARENT-3-PROJECT_LOC/src/main.c</locationURI>
+		</link>
+		<link>
 			<name>uartstdio.c</name>
 			<type>1</type>
 			<locationURI>PARENT-3-PROJECT_LOC/sdk/ti/driverlib_2_1_4_178/utils/uartstdio.c</locationURI>
