@@ -171,7 +171,7 @@ static void toggleDebugPin(GpioDebugPin_t pin)
     }
 
     GPIOPinWrite(portMask, pinMask, pinMask);
-    //SysCtlDelay(ticks);
+    SysCtlDelay(ticks);
     GPIOPinWrite(portMask, pinMask, 0);
 }
 
