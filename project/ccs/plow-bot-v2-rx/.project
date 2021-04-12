@@ -35,6 +35,21 @@
 			<type>1</type>
 			<locationURI>PARENT-3-PROJECT_LOC/sdk/ti/driverlib_2_1_4_178/utils/uartstdio.c</locationURI>
 		</link>
+		<link>
+			<name>utils</name>
+			<type>2</type>
+			<locationURI>PARENT-3-PROJECT_LOC/src/utils</locationURI>
+		</link>
+		<link>
+			<name>Decoder/IbusDecoder.c</name>
+			<type>1</type>
+			<locationURI>PARENT-3-PROJECT_LOC/src/decoder/IbusDecoder.c</locationURI>
+		</link>
+		<link>
+			<name>Decoder/IbusDecoder.h</name>
+			<type>1</type>
+			<locationURI>PARENT-3-PROJECT_LOC/src/decoder/IbusDecoder.h</locationURI>
+		</link>
 	</linkedResources>
 	<variableList>
 		<variable>

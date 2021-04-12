@@ -17,6 +17,9 @@
 #include "driverlib/udma.h"
 
 #include "utils/uartstdio.h"
+#include "decoder/IbusDecoder.h"
+#include "utils/GpioUtils.h"
+#include "utils/IsrUtils.h"
 
 #define UART_RXBUF_SIZE         32
 #define DMA_BUF_COUNT           2
@@ -55,152 +58,7 @@ static uint8_t g_ui8RxBufA[UART_RXBUF_SIZE]= {0};
 static uint8_t g_ui8RxBufB[UART_RXBUF_SIZE] = {0};
 static Dma_BufStat_t dmaBufStat[DMA_BUF_COUNT] = {DmaBufStatEmpty};
 
-typedef enum {
-    GpioDebugPin1 = 1,
-    GpioDebugPin2,
-    GpioDebugPin3,
-    GpioDebugPin4,
-} GpioDebugPin_t;
-
-static void configDebugLed(void);
 static void configDmaWithUart(void);
-static void toggleDebugPin(GpioDebugPin_t pin);
-
-void uDMAErrorHandler(void)
-{
-    uint32_t ui32Status;
-
-    /* Check for uDMA error bit */
-    ui32Status = ROM_uDMAErrorStatusGet();
-
-    /* If there is a uDMA error, then clear the error and increment the error counter */
-    if(ui32Status)
-    {
-        ROM_uDMAErrorStatusClear();
-        g_ui32uDMAErrCount++;
-    }
-}
-
-void UARTIntHandler(void)
-{
-    uint32_t ui32Mode = 0;
-    uint32_t ui32Status = 0;
-    ui32Status = ROM_UARTIntStatus(UART1_BASE, true);
-
-    /* Clear interrupts */
-    ROM_UARTIntClear(UART1_BASE, ui32Status);
-
-    if (ui32Status & UART_INT_RT)
-    {
-        toggleDebugPin(GpioDebugPin4);
-    }
-
-    /* Check the DMA control table to see if the ping-pong "A" transfer is complete.
-    The "A" transfer uses receive buffer "A", and the primary control structure */
-    ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_UART1RX | UDMA_PRI_SELECT);
-
-    /* If the primary control structure indicates stop, that means the "A" receive buffer
-    is done.  The uDMA controller should still be receiving data into the "B" buffer */
-    if(ui32Mode == UDMA_MODE_STOP)
-    {
-        /* Set fill state based on DMA buffer 'A' */
-        if (dmaBufStat[DMA_BUF_A_IDX] == DmaBufStatFill)
-        {
-            dmaBufStat[DMA_BUF_A_IDX] = DmaBufStatFull;
-            dmaBufStat[DMA_BUF_B_IDX] = DmaBufStatFill;
-        }
-
-        /* Increment a counter to indicate data was received into buffer A */
-        g_ui32RxBufACount++;
-
-        /* Set up the next transfer for the "A" buffer, using the primary control structure.
-        When the ongoing receive into the "B" buffer is done, the uDMA controller will switch */
-        ROM_uDMAChannelTransferSet(UDMA_CHANNEL_UART1RX | UDMA_PRI_SELECT, UDMA_MODE_PINGPONG, (void *)(UART1_BASE + UART_O_DR), g_ui8RxBufA, sizeof(g_ui8RxBufA));
-    }
-
-    /* Check the DMA control table to see if the ping-pong "B" transfer is complete. The "B"
-    transfer uses receive buffer "B", and the alternate control structure */
-    ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_UART1RX | UDMA_ALT_SELECT);
-
-    /* If the alternate control structure indicates stop, that means the "B" receive buffer is
-    done. The uDMA controller should still be receiving data into the "A" buffer */
-    if(ui32Mode == UDMA_MODE_STOP)
-    {
-        /* Set fill state based on DMA buffer 'B' */
-        if (dmaBufStat[DMA_BUF_B_IDX] == DmaBufStatFill)
-        {
-            dmaBufStat[DMA_BUF_A_IDX] = DmaBufStatFill;
-            dmaBufStat[DMA_BUF_B_IDX] = DmaBufStatFull;
-        }
-
-        /* Increment a counter to indicate data was received into buffer A */
-        g_ui32RxBufBCount++;
-
-        /* Set up the next transfer for the "B" buffer, using the alternate control structure.
-        When the ongoing receive into the "A" buffer is done, the uDMA controller will switch */
-        ROM_uDMAChannelTransferSet(UDMA_CHANNEL_UART1RX | UDMA_ALT_SELECT, UDMA_MODE_PINGPONG, (void *)(UART1_BASE + UART_O_DR), g_ui8RxBufB, sizeof(g_ui8RxBufB));
-    }
-}
-
-static void toggleDebugPin(GpioDebugPin_t pin)
-{
-    uint32_t pinMask = 0;
-    uint32_t portMask = 0;
-    volatile uint32_t ticks = 5000000;
-
-    switch(pin)
-    {
-        case GpioDebugPin1:
-            pinMask = GPIO_PIN_0;
-            portMask = GPIO_PORTN_BASE;
-            break;
-        case GpioDebugPin2:
-            pinMask = GPIO_PIN_1;
-            portMask = GPIO_PORTN_BASE;
-            break;
-        case GpioDebugPin3:
-            pinMask = GPIO_PIN_4;
-            portMask = GPIO_PORTF_BASE;
-            break;
-        case GpioDebugPin4:
-            pinMask = GPIO_PIN_0;
-            portMask = GPIO_PORTF_BASE;
-            break;
-        default:
-            break;
-    }
-
-    GPIOPinWrite(portMask, pinMask, pinMask);
-    SysCtlDelay(ticks);
-    GPIOPinWrite(portMask, pinMask, 0);
-}
-
-static void configDebugLed(void)
-{
-    uint32_t pulseCnt = 0;
-
-    /* Configure D1 and D2 on port N */
-    ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPION);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPION)){};
-    ROM_GPIOPinTypeGPIOOutput(GPIO_PORTN_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-
-    /* Configure D3 and D4 on port F */
-    ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF)){};
-    ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_0 | GPIO_PIN_4);
-
-    for (pulseCnt = 0; pulseCnt < 10; pulseCnt++)
-    {
-        /* Toggle Debug Pin 1 */
-        toggleDebugPin(GpioDebugPin1);
-        /* Toggle Debug Pin 2 */
-        toggleDebugPin(GpioDebugPin2);
-        /* Toggle Debug Pin 3 */
-        toggleDebugPin(GpioDebugPin3);
-        /* Toggle Debug Pin 4 */
-        toggleDebugPin(GpioDebugPin4);
-    }
-}
 
 static void configDmaWithUart(void)
 {
@@ -271,13 +129,121 @@ static void configDmaWithUart(void)
 
 static void resyncStream(void)
 {
+    uint32_t idx = 0;
+    uint8_t buf[64] = {0};
+    bool foundEnd = false;
+    bool foundStart = false;
+
     while(ROM_UARTCharsAvail(UART1_BASE))
     {
         /* Read the next character from the UART and write it back to the UART */
-        //ROM_UARTCharGetNonBlocking(UART1_BASE));
+        buf[idx] = ROM_UARTCharGet(UART1_BASE);
 
-        toggleDebugPin(GpioDebugPin1);
+        if (idx > 0)
+        {
+            if ((buf[idx-1] == 0x20) && (buf[idx] == 0x40))
+            {
+                foundStart = true;
+                buf[0] = buf[idx-1];
+                buf[1] = buf[idx];
+                /* Clear remaining bytes. Set i to 3 */
+                memset(buf+2, 0x00, sizeof(buf-2));
+                idx = 3;
+            }
+            else
+            {
+                if ((foundStart == true) && (idx == 31))
+                {
+                    foundEnd = true;
+                }
+            }
+        }
+
+        if ((foundStart == true) && (foundEnd == true))
+        {
+            /* Parse packet, kick start DMA for next collection sequence */
+            Gpio_ToggleDebugPin(GPIO_DEBUG_PIN_4);
+        }
+
+        idx++;
     }
+}
+
+static void DmaErrorCallback(void)
+{
+    uint32_t ui32Status;
+
+    /* Check for uDMA error bit */
+    ui32Status = ROM_uDMAErrorStatusGet();
+
+    /* If there is a uDMA error, then clear the error and increment the error counter */
+    if(ui32Status)
+    {
+        ROM_uDMAErrorStatusClear();
+        g_ui32uDMAErrCount++;
+    }
+}
+
+static void DmaCallback(void)
+{
+
+}
+
+static void UartCallback(void)
+{
+        volatile uint32_t ui32Mode = 0;
+        volatile uint32_t ui32Status = 0;
+
+        ui32Status = ROM_UARTIntStatus(UART1_BASE, true);
+
+        /* Clear interrupts */
+        ROM_UARTIntClear(UART1_BASE, ui32Status);
+
+        /* Check the DMA control table to see if the ping-pong "A" transfer is complete.
+        The "A" transfer uses receive buffer "A", and the primary control structure */
+        ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_UART1RX | UDMA_PRI_SELECT);
+
+        /* If the primary control structure indicates stop, that means the "A" receive buffer
+        is done.  The uDMA controller should still be receiving data into the "B" buffer */
+        if(ui32Mode == UDMA_MODE_STOP)
+        {
+            /* Set fill state based on DMA buffer 'A' */
+            if (dmaBufStat[DMA_BUF_A_IDX] == DmaBufStatFill)
+            {
+                dmaBufStat[DMA_BUF_A_IDX] = DmaBufStatFull;
+                dmaBufStat[DMA_BUF_B_IDX] = DmaBufStatFill;
+            }
+
+            /* Increment a counter to indicate data was received into buffer A */
+            g_ui32RxBufACount++;
+
+            /* Set up the next transfer for the "A" buffer, using the primary control structure.
+            When the ongoing receive into the "B" buffer is done, the uDMA controller will switch */
+            ROM_uDMAChannelTransferSet(UDMA_CHANNEL_UART1RX | UDMA_PRI_SELECT, UDMA_MODE_PINGPONG, (void *)(UART1_BASE + UART_O_DR), g_ui8RxBufA, sizeof(g_ui8RxBufA));
+        }
+
+        /* Check the DMA control table to see if the ping-pong "B" transfer is complete. The "B"
+        transfer uses receive buffer "B", and the alternate control structure */
+        ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_UART1RX | UDMA_ALT_SELECT);
+
+        /* If the alternate control structure indicates stop, that means the "B" receive buffer is
+        done. The uDMA controller should still be receiving data into the "A" buffer */
+        if(ui32Mode == UDMA_MODE_STOP)
+        {
+            /* Set fill state based on DMA buffer 'B' */
+            if (dmaBufStat[DMA_BUF_B_IDX] == DmaBufStatFill)
+            {
+                dmaBufStat[DMA_BUF_A_IDX] = DmaBufStatFill;
+                dmaBufStat[DMA_BUF_B_IDX] = DmaBufStatFull;
+            }
+
+            /* Increment a counter to indicate data was received into buffer A */
+            g_ui32RxBufBCount++;
+
+            /* Set up the next transfer for the "B" buffer, using the alternate control structure.
+            When the ongoing receive into the "A" buffer is done, the uDMA controller will switch */
+            ROM_uDMAChannelTransferSet(UDMA_CHANNEL_UART1RX | UDMA_ALT_SELECT, UDMA_MODE_PINGPONG, (void *)(UART1_BASE + UART_O_DR), g_ui8RxBufB, sizeof(g_ui8RxBufB));
+        }
 }
 
 int main(void)
@@ -300,7 +266,7 @@ int main(void)
     g_ui32SysClock = MAP_SysCtlClockFreqSet((SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN | SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480), 120000000);
 
     /* Debug LED's D1-D4 */
-    configDebugLed();
+    Gpio_ConfigDebugLed();
 
     /* Enable UART 0 peripheral */
     ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
@@ -324,23 +290,35 @@ int main(void)
 
     configDmaWithUart();
 
+    Ibd_Init();
+    Isr_Init();
+    Isr_Register(ISR_REG_DMA, DmaCallback);
+    Isr_Register(ISR_REG_UART, UartCallback);
+    Isr_Register(ISR_REG_DMA_ERROR, DmaErrorCallback);
 
-
-/* Spin */
+    /* Spin */
     while(1)
     {
-
+        Ibd_Update();
         if (dmaBufStat[DMA_BUF_A_IDX] == DmaBufStatFull)
         {
+            if ((g_ui8RxBufA[0] != 0x20) || (g_ui8RxBufA[1] != 0x40))
+            {
+                resyncStream();
+            }
             /* Toggle LED for testing */
-            toggleDebugPin(GpioDebugPin1);
+            Gpio_ToggleDebugPin(GPIO_DEBUG_PIN_1);
             dmaBufStat[DMA_BUF_A_IDX] = DmaBufStatEmpty;
         }
 
         else if (dmaBufStat[DMA_BUF_B_IDX] == DmaBufStatFull)
         {
+            if ((g_ui8RxBufB[0] != 0x20) || (g_ui8RxBufB[1] != 0x40))
+            {
+                resyncStream();
+            }
             /* Toggle LED for testing */
-            toggleDebugPin(GpioDebugPin2);
+            Gpio_ToggleDebugPin(GPIO_DEBUG_PIN_2);
             dmaBufStat[DMA_BUF_B_IDX] = DmaBufStatEmpty;
         }
     }
